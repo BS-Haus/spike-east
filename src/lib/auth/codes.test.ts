@@ -69,6 +69,9 @@ describe("rate limits", () => {
     expect(LIMITS.logIp.max * (3_600_000 / LIMITS.logIp.windowMs)).toBeGreaterThanOrEqual(2 * 25);
     // A replan every time someone arrives or leaves, a dozen people turning up in ten minutes.
     expect(LIMITS.planIp.max * (600_000 / LIMITS.planIp.windowMs)).toBeGreaterThanOrEqual(2 * 12);
+    // A tournament: 30 people checked in on one phone, four nets of games to 15 (~12 min each)
+    // scored over the park's one signal, plus subs and corrections.
+    expect(LIMITS.cardsIp.max * (3_600_000 / LIMITS.cardsIp.windowMs)).toBeGreaterThanOrEqual(30 + 2 * 4 * 5);
   });
 
   it("says how long to wait in whole minutes", () => {

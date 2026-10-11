@@ -166,10 +166,76 @@ export const ratingCache = pgTable("rating_cache", {
 // short-lived like rating_cache: truncating it only resets the counts. Day-old rows are swept.
 // ---------------------------------------------------------------------------
 export const rateLimits = pgTable("rate_limits", {
-  bucket: text("bucket").primaryKey(), // "code:ip:<hmac>", "code:all", "admin:…", "log:ip:<hmac>", "plan:ip:<hmac>"
+  bucket: text("bucket").primaryKey(), // "code:ip:<hmac>", "code:all", "admin:…", "log:ip:<hmac>", "plan:ip:<hmac>", "cards:ip:<hmac>"
   hits: integer("hits").notNull().default(0),
   windowStart: timestamp("window_start", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ---------------------------------------------------------------------------
+// Tournaments ("cards", src/lib/cards.ts): weekend events with their own games, kept apart from
+// `matches` so they never touch the ratings. Players are the league's own players.
+// ---------------------------------------------------------------------------
+export const tournaments = pgTable("tournaments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  title: text("title").notNull(),
+  startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+  location: text("location").notNull().default(""),
+  notes: text("notes").notNull().default(""),
+  nets: integer("nets").notNull().default(2),
+  groupTo: integer("group_to").notNull().default(15),
+  finalTo: integer("final_to").notNull().default(15),
+  status: text("status").notNull().default("upcoming"), // upcoming | live | done
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Who's in. going = signed up, here = checked in on the day, out = can't make it / left.
+export const tournamentEntries = pgTable(
+  "tournament_entries",
+  {
+    tournamentId: uuid("tournament_id").notNull().references(() => tournaments.id, { onDelete: "cascade" }),
+    playerId: uuid("player_id").notNull().references(() => players.id, { onDelete: "cascade" }),
+    state: text("state").notNull().default("going"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.tournamentId, t.playerId] })],
+);
+
+// One round of groups: random, seeded, or the Gold/Silver/Bronze finals.
+export const tournamentStages = pgTable("tournament_stages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tournamentId: uuid("tournament_id").notNull().references(() => tournaments.id, { onDelete: "cascade" }),
+  no: integer("no").notNull(),
+  kind: text("kind").notNull(), // random | seeded | final
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// A drawn 2v2 game. It never changes shape, except that a sub can take a dropped player's place:
+// the sub's id goes in `subs`, and the result doesn't count for them.
+export const tournamentGames = pgTable(
+  "tournament_games",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tournamentId: uuid("tournament_id").notNull().references(() => tournaments.id, { onDelete: "cascade" }),
+    stageId: uuid("stage_id").notNull().references(() => tournamentStages.id, { onDelete: "cascade" }),
+    groupNo: integer("group_no").notNull(),
+    groupName: text("group_name").notNull(),
+    seq: integer("seq").notNull(),
+    ord: integer("ord").notNull(),
+    net: integer("net").notNull(),
+    a1: uuid("a1").notNull().references(() => players.id),
+    a2: uuid("a2").notNull().references(() => players.id),
+    b1: uuid("b1").notNull().references(() => players.id),
+    b2: uuid("b2").notNull().references(() => players.id),
+    subs: jsonb("subs").$type<string[]>().notNull().default([]),
+    scoreA: integer("score_a"),
+    scoreB: integer("score_b"),
+    status: text("status").notNull().default("todo"), // todo | done | void
+    enteredById: uuid("entered_by_id").references(() => players.id, { onDelete: "set null" }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("tournament_games_tournament_idx").on(t.tournamentId)],
+);
 
 // ---------------------------------------------------------------------------
 // Relations

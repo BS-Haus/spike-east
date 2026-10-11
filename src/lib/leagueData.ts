@@ -6,6 +6,7 @@ import { adminActive } from "@/lib/auth/admin";
 import { sharedCodeLength } from "@/lib/auth/pin";
 import type { LeaguePlayer, LeagueMatch } from "@/lib/league";
 import { getRatings } from "@/lib/ratingLedger";
+import { nextTournament, type NextTournament } from "@/lib/cardsData";
 import type { ScopeRatings } from "@/lib/ratingCache";
 import { seasonsAt, targetAt, type Season } from "@/lib/season";
 
@@ -55,6 +56,9 @@ export type LeagueData = {
    * disagree about which day it is and React tears the tree down.
    */
   now: number;
+  /** A tournament on now, or the next one in the coming fortnight, for the ladder's banner
+   *  (src/lib/cardsData.ts). Tournaments live at /cards and never touch the ratings. */
+  tournament: NextTournament | null;
 };
 
 function isoDay(d: Date): string {
@@ -178,7 +182,7 @@ export async function getLeagueData(): Promise<LeagueData> {
     : null;
 
   const leaguePlayers = roster.map(({ id, name, color, active }) => ({ id, name, color, active }));
-  const ratings = await getRatings(leaguePlayers, leagueMatches, leagueSeasons);
+  const [ratings, tournament] = await Promise.all([getRatings(leaguePlayers, leagueMatches, leagueSeasons), nextTournament(now)]);
   const adminUntil =
     session && adminIds.includes(session.playerId) && adminActive(session.adminUntil, now) ? session.adminUntil! : null;
 
@@ -194,6 +198,7 @@ export async function getLeagueData(): Promise<LeagueData> {
     days,
     availabilityByDay,
     sessionPlan,
+    tournament,
     now,
   };
 }

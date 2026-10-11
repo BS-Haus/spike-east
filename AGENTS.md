@@ -107,8 +107,10 @@ The repo is public and `main` deploys straight to the live league, so:
 - **Pickers fold away people resting 28+ days** (`splitRoster`, read from All time): sign-in, the
   matchmaker's who's-here chips and the Log chips show who's played lately (or never, i.e. just
   added) and hide the rest behind "+N more" — anyone tapped in or on a team always shows.
-- **Only 9 tables:** `players`, `matches`, `match_teams`, `match_players`, `availability`,
-  `session_plans`, `session_games`, `rating_cache`, `rate_limits`. The old seasons /
+- **13 tables:** `players`, `matches`, `match_teams`, `match_players`, `availability`,
+  `session_plans`, `session_games`, `rating_cache`, `rate_limits`, and the four tournament tables
+  (`tournaments`, `tournament_entries`, `tournament_stages`, `tournament_games`, migration 0006;
+  see Tournaments). The old seasons /
   rating_snapshots / badges / points / disputes tables were dropped (migration 0002); the two
   session tables arrived in 0003, `rating_cache` in 0004, `rate_limits` in 0005 (see Auth; also
   derived and short-lived, so truncating it only resets the counts). `rating_cache` is DERIVED —
@@ -267,6 +269,34 @@ The repo is public and `main` deploys straight to the live league, so:
   reads Tim +41, Euan +50. The ladder compressed (Tim 1376 → 1172) with the order barely moved.
   Going lower (0.35, 0.25) predicts measurably worse and makes genuine improvement slow to show.
 
+## Tournaments (`/cards`)
+Weekend "cards" tournaments, ported from the standalone BS-Haus/roundnet-open app: an admin posts
+an event, players say they're in, and on the day everyone plays in groups of 4–5 (a new partner
+every game, each group on its own net), regroups by level, and finishes in Gold / Silver / Bronze
+finals. Decisions made when it came in, so don't undo them casually:
+- **Tournament games never touch the ratings.** They live in their own tables and only
+  `src/lib/cards.ts` reads them; nothing in `league.ts`, `getLeagueData` or the rating cache
+  does. Games are to 15, subs play for others, and groups are drawn rather than chosen, so
+  feeding them into the fit would need a decision about all of that first.
+- **Players are the league's own players.** There are no tournament accounts: you sign in with the
+  shared code as anywhere else (`/?signin=1&next=/cards/<id>` opens the keypad and comes back;
+  `next` only ever accepts a `/cards` path). An admin checking in a name nobody has creates a
+  league player (`createPlayer`, `src/lib/players.ts`, the same thing Manage players does).
+- **Running one is admin-only, unlocked** (`requireAdmin`, now in `src/lib/auth/guard.ts` so both
+  action files share it and it can't be called as an action itself): posting, checking people
+  in, drawing stages, finishing. Anyone signed in can say they're coming, enter scores in any
+  order, put a sub in and skip a game, capped per IP (`writeAllowed("cards")`).
+- **A drawn game never changes shape.** Late arrivals join the next stage; someone who leaves is
+  covered by a sub (`withSub`), whose game counts for the other three and never for the sub.
+  Undo only works while nothing in the latest stage has a score. Seeded stages and finals put late
+  arrivals mid-table (`seededOrder`), not last.
+- Its own routes, not a SpikeApp screen: `/cards` (the list) and `/cards/[id]` (one event, the link
+  that goes in WhatsApp, refreshing every 5 s while live). The ladder shows a banner when one is
+  on or due in the next fortnight (`LeagueData.tournament`), and Me links to the list.
+- **Styled with Tailwind classes**, unlike the rest of the app: it came that way, on the same
+  `@theme` tokens in `globals.css`, and `src/components/cards/ui.tsx` reuses the league's `Avatar`
+  and `C`. The format itself is pure and tested (`src/lib/cards.ts`, `cards.test.ts`).
+
 ## Auth
 - **Guest browsing by default** (no cookie). Sign in = the league's **shared code** (`SPIKE_PIN`,
   4–8 digits; dev falls back to `0000`, production refuses sign-in without a valid one), then
@@ -315,9 +345,12 @@ The repo is public and `main` deploys straight to the live league, so:
 - `src/components/spike/ui.tsx`, the shared kit — import `C`/`Avatar` from here, never redeclare.
 - `src/components/spike/`, the extracted screens and widgets (see Architecture above).
 - `src/components/spike/WhyDelta.tsx`, the per-player breakdown behind every ± in a match sheet.
-- `src/db/schema.ts`, Drizzle schema (9 tables, lean).
+- `src/db/schema.ts`, Drizzle schema (13 tables, lean).
 - `src/lib/auth/`: `pin.ts` (the shared code), `session.ts` (cookies), `admin.ts` (the admin code),
-  `limits.ts` + `rateLimit.ts` (rate limits). `src/app/actions/league.ts` holds every server action.
+  `limits.ts` + `rateLimit.ts` (rate limits), `guard.ts` (`requireAdmin`). `src/app/actions/league.ts`
+  holds the league's server actions, `src/app/actions/cards.ts` the tournaments'.
+- `src/lib/cards.ts`, the tournament format (groups, schedules, tables, subs, seeding; pure);
+  `src/lib/cardsData.ts`, its loader; `src/components/cards/`, its two pages' components.
 - `.github/workflows/ci.yml` (typecheck, tests, build on every pull request; no secrets) and
   `migrate.yml` (applies migrations to production after merge, behind the `production-db`
   environment's approval). `vercel.json` gives Dependabot's branches no preview deploy, so their
@@ -416,7 +449,8 @@ novelty term, which flattens the cost landscape and hides exactly this class of 
   result to bad court WiFi is the one failure that isn't acceptable here.
 - Drizzle: edit `schema.ts`, then `npm run db:generate && npm run db:migrate`.
 - DB driver is `postgres` (postgres.js) for BOTH local and Neon, don't add the Neon serverless driver.
-- Styling is inline-style objects matching the design's exact hex (palette `C` from `spike/ui.tsx`).
+- Styling is inline-style objects matching the design's exact hex (palette `C` from `spike/ui.tsx`),
+  except the tournament pages (see Tournaments).
 - **Fonts are self-hosted** (`src/app/fonts`, loaded with `next/font/local`): the same Latin
   variable Geist and Geist Mono files Google Fonts serves, with their OFL licence beside them. Don't
   go back to `next/font/google`. It downloads the fonts at build time, and Turbopack fails the whole
@@ -450,7 +484,9 @@ the caps' arithmetic against a real night), plus the
 priority level above, determinism, and partial replan (frozen prefix, late arrival, departure).
 When touching the scheduler, the two that matter most are "puts the pairings that haven't played
 in the longest time first" and "still mixes up the session when the league already has history" —
-they pin the behaviours that regressed during development.
+they pin the behaviours that regressed during development. Tournaments (`src/lib/cards.test.ts`):
+group sizes, no repeat partners in a group, nets shared in turn, a sub's game never counting for
+the sub, group winners and ties, standings that skip finals, and late arrivals seeded mid-table.
 
 ## Not fully built (roadmap)
 Live point-by-point mode, Rim-vs-Pocket disputes+voting, official WhatsApp Cloud API.
@@ -458,10 +494,10 @@ Live point-by-point mode, Rim-vs-Pocket disputes+voting, official WhatsApp Cloud
 **Share the ladder was removed.** Nobody used it; the season pill took its place in the header.
 The matchmaker's Copy (tonight's plan as text) is what still goes to the group chat.
 
-**Tournaments were removed.** The bracket/americano generators and their screen were
+**The old tournaments were removed.** The bracket/americano generators and their screen were
 ephemeral, never persisted and never used. They predate this repo's public history (the
-maintainer's private archive has them), so ask before bringing the format back — don't
-reintroduce them speculatively.
+maintainer's private archive has them). The cards format above replaced them, on purpose and
+persisted; ask before adding another format.
 
 **Voice logging was removed** too — a Web Speech API prototype nobody used, whose BETA tab
 cost vertical space on the most-used screen in the app.

@@ -4,10 +4,12 @@ import { revalidatePath } from "next/cache";
 import { eq, and, gt, isNull, asc, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { players, matches, matchTeams, matchPlayers, availability, sessionPlans, sessionGames } from "@/db/schema";
-import { hashPin, sharedCode, sharedCodeMatches } from "@/lib/auth/pin";
+import { sharedCode, sharedCodeMatches } from "@/lib/auth/pin";
 import { codeAttempt, writeAllowed } from "@/lib/auth/rateLimit";
 import { createSession, destroySession, getSession } from "@/lib/auth/session";
-import { adminActive, adminCodeMatches, ADMIN_CODE_MIN, ADMIN_HOURS } from "@/lib/auth/admin";
+import { adminCodeMatches, ADMIN_CODE_MIN, ADMIN_HOURS } from "@/lib/auth/admin";
+import { requireAdmin } from "@/lib/auth/guard";
+import { createPlayer } from "@/lib/players";
 import { logMatchSchema, validWinBy2, type LogMatchInput } from "@/lib/validation";
 import { seasonsAt, targetAt } from "@/lib/season";
 import { dayNum, numKey } from "@/lib/day";
@@ -23,19 +25,6 @@ const isUuid = (v: unknown): v is string => typeof v === "string" && UUID_RE.tes
 const isName = (v: unknown): v is string => typeof v === "string" && v.trim().length >= 1 && v.trim().length <= 30;
 /** A beat after every wrong code, on top of the attempt limits. */
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-const PLAYER_COLORS = ["#BEF264", "#5EEAD4", "#F9A8D4", "#93C5FD", "#FDA4AF", "#FCD34D", "#C4B5FD", "#FDBA74", "#67E8F9", "#A3E635", "#F0ABFC", "#FCA5A5"];
-
-/** Admin actions need an admin player AND an unlocked session: the shared sign-in code lets
- *  anyone pick an admin's name, so the name alone proves nothing. Checked on every call. */
-async function requireAdmin(): Promise<{ ok: true } | { ok: false; error: string }> {
-  const session = await getSession();
-  if (!session) return { ok: false, error: "Admins only." };
-  const [p] = await db.select({ isAdmin: players.isAdmin }).from(players).where(eq(players.id, session.playerId));
-  if (!p?.isAdmin) return { ok: false, error: "Admins only." };
-  if (!adminActive(session.adminUntil, Date.now())) return { ok: false, error: "Admin is locked. Enter the admin code." };
-  return { ok: true };
-}
 
 /**
  * Unlock admin for ADMIN_HOURS with the admin code (SPIKE_ADMIN_CODE). Only an admin player can,
@@ -77,18 +66,8 @@ export async function addPlayer(displayName: string): Promise<ActionResult> {
   const admin = await requireAdmin();
   if (!admin.ok) return admin;
   if (!isName(displayName)) return { ok: false, error: "Enter a name." };
-  const trimmed = displayName.trim();
-  const code = sharedCode();
-  if (!code) return { ok: false, error: "Set SPIKE_PIN (4–8 digits) before adding players." };
-  const baseSlug = trimmed.toLowerCase().replace(/[^a-z0-9]/g, "") || "player";
-  const existing = await db.select({ name: players.name, color: players.color }).from(players);
-  const taken = new Set(existing.map((p) => p.name));
-  let slug = baseSlug, n = 1;
-  while (taken.has(slug)) slug = `${baseSlug}${++n}`;
-  const usedColors = new Set(existing.map((p) => p.color));
-  const color = PLAYER_COLORS.find((c) => !usedColors.has(c)) ?? PLAYER_COLORS[existing.length % PLAYER_COLORS.length];
-  const pinHash = await hashPin(code);
-  await db.insert(players).values({ name: slug, displayName: trimmed, color, pinHash });
+  const created = await createPlayer(displayName);
+  if (!created.ok) return created;
   revalidatePath("/");
   return { ok: true };
 }

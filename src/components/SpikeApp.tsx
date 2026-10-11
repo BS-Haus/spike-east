@@ -71,6 +71,7 @@ import {
 } from "@/components/spike/ui";
 import { validWinBy2 } from "@/lib/validation";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 
 // Run the scroll reset before the browser paints (so a new screen never flashes
@@ -173,11 +174,13 @@ type State = {
   localMatches: LeagueMatch[];
 };
 
-export default function SpikeApp({ data }: { data: LeagueData }) {
+/** `signIn`: opened from a tournament page's "Sign in" (/?signin=1&next=/cards/…): start on the
+ *  keypad, and go back to `next` once a name is picked. */
+export default function SpikeApp({ data, signIn }: { data: LeagueData; signIn?: { next: string | null } | null }) {
   const [s, setSAll] = useState<State>(() => ({
-    screen: "ladder",
+    screen: signIn ? "login" : "ladder",
     currentUser: data.currentUserId,
-    guest: !data.currentUserId,
+    guest: !data.currentUserId && !signIn,
     loginStage: "pin",
     pin: "",
     pinError: null,
@@ -517,8 +520,10 @@ export default function SpikeApp({ data }: { data: LeagueData }) {
   };
   const pickName = async (id: string) => {
     const res = await signInAction(id, s.pin);
-    if (res.ok) setS({ currentUser: id, guest: false, screen: "ladder", loginStage: "pin", pin: "" });
-    else setS({ loginStage: "pin", pin: "", pinError: codeError(res.error) });
+    if (res.ok) {
+      setS({ currentUser: id, guest: false, screen: "ladder", loginStage: "pin", pin: "" });
+      if (signIn?.next) router.push(signIn.next);
+    } else setS({ loginStage: "pin", pin: "", pinError: codeError(res.error) });
   };
   const pinBack = () => setS({ loginStage: "pin", pin: "", pinError: null });
   const enterGuest = () => setS({ screen: "ladder", guest: true, currentUser: null, ladderView: "podium" });
@@ -1404,6 +1409,7 @@ export default function SpikeApp({ data }: { data: LeagueData }) {
     const unranked = scope === "all" ? cs.unranked.filter((p) => p.active) : [];
     return (
       <div style={{ padding: "14px 16px 0" }}>
+        {renderTournamentBanner()}
         <SegTabs group="ladder" value={s.ladderView} onChange={(v) => setS({ ladderView: v })} options={[["podium", "Ranked"], ["table", "Table"], ["chemistry", "Chemistry"]] as const} />
 
         {/* A new season has an empty ladder by design. Say why, once, and point at how the
@@ -2525,8 +2531,33 @@ export default function SpikeApp({ data }: { data: LeagueData }) {
           </>
         )}
 
+        <Link href="/cards" className={press} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", textDecoration: "none", color: C.fg, background: C.surface, border: "1px solid rgba(255,255,255,.06)", borderRadius: 14, padding: "13px 14px", marginBottom: 18 }}>
+          <span>
+            <span style={{ display: "block", fontSize: 14.5, fontWeight: 800 }}>Tournaments</span>
+            <span style={{ display: "block", fontSize: 12, color: C.muted, marginTop: 2 }}>{adminOn ? "Post an event, check people in, draw groups" : "Weekend cards: sign up, scores, finals"}</span>
+          </span>
+          <Chevron dir="right" color={C.dim} />
+        </Link>
+
         <button onClick={doSignOut} className={press} style={{ width: "100%", height: 48, borderRadius: 14, background: "none", border: "1px solid rgba(255,107,107,.3)", color: C.loss, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Sign out</button>
       </div>
+    );
+  }
+
+  /** A tournament on now, or the next one in the coming fortnight: one tap to its page (/cards). */
+  function renderTournamentBanner() {
+    const t = data.tournament;
+    if (!t) return null;
+    const when = new Date(t.startsAt).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: LEAGUE_TZ });
+    return (
+      <Link href={`/cards/${t.id}`} className={press} style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none", color: t.live ? C.ink : C.fg, background: t.live ? C.accent : "rgba(203,251,79,.05)", border: t.live ? "none" : "1px solid rgba(203,251,79,.22)", borderRadius: 14, padding: "12px 14px", marginBottom: 14 }}>
+        {t.live && <span className="spk-live" aria-hidden="true" style={{ width: 9, height: 9, borderRadius: "50%", background: C.ink, flexShrink: 0 }} />}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: t.live ? C.ink : C.accent, opacity: t.live ? 0.7 : 1 }}>{t.live ? "Tournament on now" : "Tournament"}</div>
+          <div style={{ fontSize: 15, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.title}{t.live ? "" : <span style={{ fontWeight: 600, color: C.muted }}> · {when}</span>}</div>
+        </div>
+        <Chevron dir="right" color={t.live ? C.ink : C.dim} />
+      </Link>
     );
   }
 

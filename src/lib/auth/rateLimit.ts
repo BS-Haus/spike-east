@@ -86,11 +86,11 @@ export async function codeAttempt(kind: "code" | "admin"): Promise<CodeAttempt> 
 }
 
 /** Count a write by a signed-in player against their IP's allowance (see LIMITS). */
-export async function writeAllowed(kind: "log" | "plan"): Promise<{ ok: true } | { ok: false; error: string }> {
-  const policy = kind === "log" ? LIMITS.logIp : LIMITS.planIp;
+export async function writeAllowed(kind: "log" | "plan" | "cards"): Promise<{ ok: true } | { ok: false; error: string }> {
+  const policy = kind === "log" ? LIMITS.logIp : kind === "plan" ? LIMITS.planIp : LIMITS.cardsIp;
   try {
     const wait = await take([[`${kind}:ip:${await clientKey()}`, policy]]);
-    if (wait > 0) return { ok: false, error: tooManyMessage(wait, kind === "log" ? "games logged" : "plans") };
+    if (wait > 0) return { ok: false, error: tooManyMessage(wait, kind === "log" ? "games logged" : kind === "plan" ? "plans" : "changes") };
   } catch (e) {
     logFailure(e);
   }

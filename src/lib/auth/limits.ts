@@ -18,7 +18,9 @@
 //
 // Writes by signed-in players (logging a game, planning a night) are capped per IP only, far
 // above a real night (five courts log ~25 games an hour, often all from one venue's WiFi). A
-// league-wide cap there would let one person with the code stop everyone logging.
+// league-wide cap there would let one person with the code stop everyone logging. Tournament
+// writes (scores, subs, check-ins) get their own, larger bucket: a whole field checks in and
+// scores from the park's one signal, and that shouldn't eat into the night's logging.
 
 export type LimitPolicy = { windowMs: number; max: number };
 
@@ -32,6 +34,7 @@ export const LIMITS = {
   adminAll: { windowMs: HOUR, max: 20 },
   logIp: { windowMs: HOUR, max: 60 },
   planIp: { windowMs: 10 * MIN, max: 30 },
+  cardsIp: { windowMs: HOUR, max: 150 },
 } satisfies Record<string, LimitPolicy>;
 
 /** A bucket as the upsert left it: `hits` already includes the try being judged. */
